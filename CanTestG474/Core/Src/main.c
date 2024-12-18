@@ -60,11 +60,6 @@ osMessageQueueId_t queueRxCANHandle;
 const osMessageQueueAttr_t queueRxCAN_attributes = {
   .name = "queueRxCAN"
 };
-/* Definitions for semRxCAN */
-osSemaphoreId_t semRxCANHandle;
-const osSemaphoreAttr_t semRxCAN_attributes = {
-  .name = "semRxCAN"
-};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -88,6 +83,11 @@ int _write(int file, char *data, int len)
 	HAL_UART_Transmit(&huart2, (uint8_t*)data, len, 100);
 	return len;
 }
+
+typedef struct
+{
+	uint8_t data[9];
+} CanMsg;
 
 
 /* USER CODE END 0 */
@@ -134,10 +134,6 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
-  /* Create the semaphores(s) */
-  /* creation of semRxCAN */
-  semRxCANHandle = osSemaphoreNew(1, 1, &semRxCAN_attributes);
-
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -148,7 +144,7 @@ int main(void)
 
   /* Create the queue(s) */
   /* creation of queueRxCAN */
-  queueRxCANHandle = osMessageQueueNew (32, sizeof(uint8_t), &queueRxCAN_attributes);
+  queueRxCANHandle = osMessageQueueNew (8, sizeof(CanMsg), &queueRxCAN_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -369,18 +365,16 @@ static void MX_GPIO_Init(void)
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-	FDCAN_RxHeaderTypeDef rxHeader;
-	uint8_t rxData[8];
-
 	if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0)
 	{
+		FDCAN_RxHeaderTypeDef rxHeader;
+		uint8_t rxData[8];
+
 		if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &rxHeader, rxData) == HAL_OK)
 		{
-			for (uint8_t i = 0; i < 8; ++i)
-			{
-				osMessageQueuePut(queueRxCANHandle, rxData + i, 0, 0);
-			}
-			osSemaphoreRelease(semRxCANHandle);
+			CanMsg msg;
+			strncpy((char*)(msg.data), (char*)rxData, 8);
+			osMessageQueuePut(queueRxCANHandle, &msg, 0, 0);
 		}
 	}
 }
@@ -407,23 +401,17 @@ void StartDefaultTask(void *argument)
 		Error_Handler();
 	}
 
-	uint8_t rxByte;
-	uint8_t rxData[9];
+	CanMsg msg;
 
 	printf("CANFD rx interrupt example CMSIS OS2\r\n");
 
 	/* Infinite loop */
 	for(;;)
 	{
-		osSemaphoreAcquire(semRxCANHandle, osWaitForever);
-		for (uint8_t i = 0; i < 8; ++i)
-		{
-			osMessageQueueGet(queueRxCANHandle, &rxByte, NULL, osWaitForever);
-			rxData[i] = rxByte;
-		}
-		rxData[8] = '\0';
-		printf("got message: %s\r\n", rxData);
-		memset(rxData, '\0', 9);
+		osMessageQueueGet(queueRxCANHandle, &msg, NULL, osWaitForever);
+		msg.data[8] = '\0';
+		printf("got message: %s\r\n", msg.data);
+		memset(msg.data, '\0', 8);
 	}
   /* USER CODE END 5 */
 }
