@@ -55,6 +55,16 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 128 * 4
 };
+/* Definitions for queueRxCAN */
+osMessageQueueId_t queueRxCANHandle;
+const osMessageQueueAttr_t queueRxCAN_attributes = {
+  .name = "queueRxCAN"
+};
+/* Definitions for semRxCAN */
+osSemaphoreId_t semRxCANHandle;
+const osSemaphoreAttr_t semRxCAN_attributes = {
+  .name = "semRxCAN"
+};
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -124,6 +134,10 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
+  /* Create the semaphores(s) */
+  /* creation of semRxCAN */
+  semRxCANHandle = osSemaphoreNew(1, 1, &semRxCAN_attributes);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -131,6 +145,10 @@ int main(void)
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
+
+  /* Create the queue(s) */
+  /* creation of queueRxCAN */
+  queueRxCANHandle = osMessageQueueNew (32, sizeof(uint8_t), &queueRxCAN_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -347,17 +365,22 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-FDCAN_RxHeaderTypeDef g_rxHeader;
-uint8_t g_rxData[8];
-uint8_t g_dataReadyToPrint = 0;
+
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
+	FDCAN_RxHeaderTypeDef rxHeader;
+	uint8_t rxData[8];
+
 	if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0)
 	{
-		if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &g_rxHeader, g_rxData) == HAL_OK)
+		if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &rxHeader, rxData) == HAL_OK)
 		{
-			g_dataReadyToPrint = 1;
+			for (uint8_t i = 0; i < 8; ++i)
+			{
+				osMessageQueuePut(queueRxCANHandle, rxData + i, 0, 0);
+			}
+			osSemaphoreRelease(semRxCANHandle);
 		}
 	}
 }
@@ -383,19 +406,24 @@ void StartDefaultTask(void *argument)
 	{
 		Error_Handler();
 	}
+
+	uint8_t rxByte;
+	uint8_t rxData[9];
+
+	printf("CANFD rx interrupt example CMSIS OS2\r\n");
+
 	/* Infinite loop */
 	for(;;)
 	{
-		osDelay(1000);
-		HAL_GPIO_TogglePin(LED_GREEN_GPIO_Port, LED_GREEN_Pin);
-
-		if (g_dataReadyToPrint)
+		osSemaphoreAcquire(semRxCANHandle, osWaitForever);
+		for (uint8_t i = 0; i < 8; ++i)
 		{
-			printf("rx message: %s\r\n", g_rxData);
-			printf("from: %d\r\n", (int)g_rxHeader.Identifier);
-			memset(g_rxData, '\0', 8);
-			g_dataReadyToPrint = 0;
+			osMessageQueueGet(queueRxCANHandle, &rxByte, NULL, osWaitForever);
+			rxData[i] = rxByte;
 		}
+		rxData[8] = '\0';
+		printf("got message: %s\r\n", rxData);
+		memset(rxData, '\0', 9);
 	}
   /* USER CODE END 5 */
 }
